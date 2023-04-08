@@ -6,11 +6,13 @@
 
 using namespace std;
 
-int array_section = 0;
+// class-wide variable to hold number of threads available
+int THREAD_NO = 4;
 
+// old sorting method
 void
 thread_sort(vector<int>* v, size_t start, size_t finish) {
-    qsort(v->data(), finish - start, sizeof((*v)[0]),
+    qsort(v->data() + start, finish - start, sizeof((*v)[0]),
         [](const void* nums, const void* b) {
             int ia = *((int*)nums);
             int ib = *((int*)b);
@@ -20,110 +22,62 @@ thread_sort(vector<int>* v, size_t start, size_t finish) {
         });
 }
 
-void merge(int low, int mid, int high, vector<int> nums) {
-    int* left = new int[mid - low + 1];
-    int* right = new int[high - mid];
-    int n1 = mid - low + 1, n2 = high - mid, i, j;
+/*
+basically, the way my threaded sorting algorithm is working is
+the vector of integers is divided into sections equal to the 
+number of available threads. Each one of those sections is 
+individually sorted, then after every section has been sorted,
+a broad sort over the entire vector is then used at the end. 
 
-    for (i = 0; i < n1; i++)
-        left[i] = nums[i + low];
- 
-    for (i = 0; i < n2; i++)
-        right[i] = nums[i + mid + 1];
- 
-    int k = low;
-    i = j = 0;
- 
-    while (i < n1 && j < n2) {
-        if (left[i] <= right[j])
-            nums[k++] = left[i++];
-        else
-            nums[k++] = right[j++];
-    }
- 
-    while (i < n1) {
-        nums[k++] = left[i++];
-    }
- 
-    while (j < n2) {
-        nums[k++] = right[j++];
-    }
+So if there are 8 available threads, and the vector is 200 
+elements long, this algorithm will be first fed thread 0 from
+position 0 to 24 (200 divided by 8 threads), then the next thread
+will recieve elements from 25 - 49 to sort and so on.
+
+Made use of the partial_sort function from the standard library
+*/
+void my_thread_sort(vector<int>* nums, int start, int end) {
+    partial_sort(nums->begin() + start, nums->begin() + end, nums->begin());
 }
 
-void merge_sort(int low, int high, vector<int> nums) {
-    int mid = low + (high - low) / 2;
-    if (low < high) {
- 
-        merge_sort(low, mid, nums);
-        merge_sort(mid + 1, high, nums);
-        merge(low, mid, high, nums);
-    }
-}
-
-void merge_entry(vector<int>& nums) {
-    int section = array_section++;
-    int low = section * (20 / 4);
-    int high = (section + 1) * (20 / 4) - 1;
-    int mid = low + (high - low) / 2;
-
-    if (low < high) {
-        merge_sort(low, mid, nums);
-        merge_sort(mid + 1, high, nums);
-        merge(low, mid, high, nums);
-    }
-}
-
-void test_sort(vector<int>& nums) {
-    for (int i = 0; i < nums.size(); i++) {
-        if (nums[i] > nums[i + 1]) {
-            int temp = nums[i];
-            nums[i] = nums[i + 1];
-            nums[i + 1] = temp;
-        }
-    }
-}
 
 void
 do_the_sort(vector<int>& nums) {
-    // This is what you need to modify. This is so slow...
-    // It's single threaded, we can do better, right?
-
-    /*
-    thread sorter(thread_sort, &nums, (size_t)0, nums.size());
-    sorter.join();
-    */
 
     // keeping an integer for how many threads are available
-    //int available_threads = thread::hardware_concurrency();
-    int available_threads = 4;
-
-    // nums vector to hold all of the threads that will be created
-    vector<thread> threads;
-
-    if(available_threads < 1) {
+    THREAD_NO = thread::hardware_concurrency();
+    if(THREAD_NO < 1) {
         cout << "Something went wrong with hardware_concurrency call." << endl;
     }
 
-    //test_sort(nums);
+    printf("Number of threads being used for sorting: %d\n", THREAD_NO);
 
-    // https://stackoverflow.com/questions/30768216/c-stdvector-of-independent-stdthreads 
-    for (int i = 0; i < available_threads; i++) {
-        threads.push_back(thread(merge_entry, nums));
+    // vector to hold all of the threads that will be created
+    vector<thread> threads;
+
+    // the multipler indicates the range of each of the
+    // sections of the list that will be sorted
+    int multiplier = nums.size() / THREAD_NO;
+
+    // create each thread and add them to the thread vector list
+    for (int i = 0; i < THREAD_NO; i++) {
+        threads.push_back(thread(my_thread_sort, &nums, (i * multiplier), ((i + 1) * multiplier)));
     }
-
+ 
+    // join all the threads created in the vector of threads
     for (auto &th : threads) {
         th.join();
     }
 
-    // You should determine the number of cores available and
-    // create nums thread for each available core. Each thread
-    // should be given nums part of the array to work on.
-    // C++, look at thread::hardware_concurrency()
-
-    // Your main thread will need to join the results together
-    // to finish the sorting process. Note: you're welcome
-    // to use sort() (C++) or the qsort() function (C) in
-    // your thread. This isn't nums data structures class.
+    // One final sort is necessary, because only sections of
+    // the vector have been sorted independent from one another.
+    // in theory, sorting the whole thing when most of sections
+    // are already sorted -should- make it faster?
+    //
+    // I say in theory because testing this multithreaded version with
+    // just the basic sort over the entire array doesn't actually
+    // seem any faster.
+    sort(nums.begin(), nums.end());
 }
 
 bool
@@ -139,9 +93,9 @@ verifysorted(const vector<int>& nums) {
 int main()
 {
     // const variable to keep track of how big the array will be
-    // while I'm debugging and not wanting to input nums size for the
+    // while I'm debugging and not wanting to input a size for the
     // array every time.
-    const int SIZE_OF_ARRAY = 20;
+    const int SIZE_OF_ARRAY = 10000000;
     vector<int> nums;
 
     /*
@@ -160,14 +114,18 @@ int main()
     auto start = chrono::high_resolution_clock::now();
 
     do_the_sort(nums);
+    //To compare it to just a basic sort
+    //sort(nums.begin(), nums.end());
 
     auto finish = chrono::high_resolution_clock::now();
 
     // little code to output the array and check
+    /*
     for (auto &num : nums) {
         printf("%d  ", num);
     }
     cout << endl;
+    */
 
     if (!verifysorted(nums)) {
         cout << "Your array isn't sorted. Fast and wrong is wrong." << endl;
